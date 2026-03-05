@@ -868,15 +868,6 @@ fn cmd_init(mode: InitMode) -> Result<()> {
                 PathBuf::from(&home).join(".gemini/settings.json"),
                 "mcpServers",
             ),
-            (
-                "Zed",
-                if cfg!(target_os = "macos") {
-                    PathBuf::from(&home).join(".zed/settings.json")
-                } else {
-                    PathBuf::from(&home).join(".config/zed/settings.json")
-                },
-                "context_servers",
-            ),
             // --- Terminal tools ---
             (
                 "Amp",
@@ -912,6 +903,15 @@ fn cmd_init(mode: InitMode) -> Result<()> {
             let status = inject_mcp_server(config_path, "icm", &icm_server_entry, key)?;
             println!("[mcp] {name:<16} {status}");
         }
+
+        // Zed uses nested command.path format
+        let zed_path = if cfg!(target_os = "macos") {
+            PathBuf::from(&home).join(".zed/settings.json")
+        } else {
+            PathBuf::from(&home).join(".config/zed/settings.json")
+        };
+        let zed_status = inject_zed_mcp_server(&zed_path, "icm", &icm_bin_str)?;
+        println!("[mcp] {:<16} {zed_status}", "Zed");
 
         // Codex CLI uses TOML format
         let codex_path = PathBuf::from(&home).join(".codex/config.toml");
@@ -1202,6 +1202,51 @@ fn inject_mcp_server(
         .as_object_mut()
         .unwrap()
         .insert(name.to_string(), entry.clone());
+
+    let output = serde_json::to_string_pretty(&config)?;
+    std::fs::write(config_path, output)
+        .with_context(|| format!("cannot write {}", config_path.display()))?;
+
+    Ok("configured".into())
+}
+
+/// Inject ICM MCP server into Zed settings.json (uses `context_servers` with nested `command` object).
+fn inject_zed_mcp_server(config_path: &PathBuf, name: &str, bin_path: &str) -> Result<String> {
+    let mut config: Value = if config_path.exists() {
+        let content = std::fs::read_to_string(config_path)
+            .with_context(|| format!("cannot read {}", config_path.display()))?;
+        serde_json::from_str(&content)
+            .with_context(|| format!("invalid JSON in {}", config_path.display()))?
+    } else {
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        serde_json::json!({})
+    };
+
+    let servers = config
+        .as_object_mut()
+        .context("config is not a JSON object")?
+        .entry("context_servers")
+        .or_insert_with(|| serde_json::json!({}));
+
+    if servers.get(name).is_some() {
+        return Ok("already configured".into());
+    }
+
+    let zed_entry = serde_json::json!({
+        "command": {
+            "path": bin_path,
+            "args": ["serve"],
+            "env": {}
+        },
+        "settings": {}
+    });
+
+    servers
+        .as_object_mut()
+        .unwrap()
+        .insert(name.to_string(), zed_entry);
 
     let output = serde_json::to_string_pretty(&config)?;
     std::fs::write(config_path, output)
