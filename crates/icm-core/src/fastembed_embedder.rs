@@ -17,9 +17,7 @@ const DEFAULT_MODEL: &str = "intfloat/multilingual-e5-base";
 
 /// Resolve a model string to (EmbeddingModel, dimensions).
 fn resolve_model(name: &str) -> IcmResult<(EmbeddingModel, usize)> {
-    let model: EmbeddingModel = name
-        .parse()
-        .map_err(|e: String| IcmError::Embedding(e))?;
+    let model: EmbeddingModel = name.parse().map_err(|e: String| IcmError::Embedding(e))?;
     let dims = model_dimensions(&model);
     Ok((model, dims))
 }
@@ -72,9 +70,7 @@ impl FastEmbedder {
 
     /// Create with a specific model by name (e.g. "intfloat/multilingual-e5-small").
     pub fn with_model(model_name: &str) -> Self {
-        let dims = resolve_model(model_name)
-            .map(|(_, d)| d)
-            .unwrap_or(384);
+        let dims = resolve_model(model_name).map(|(_, d)| d).unwrap_or(384);
         Self {
             model: OnceLock::new(),
             init_lock: Mutex::new(()),
@@ -92,10 +88,9 @@ impl FastEmbedder {
             return Ok(m);
         }
         let (emb_model, _) = resolve_model(&self.model_name)?;
-        let model = TextEmbedding::try_new(
-            InitOptions::new(emb_model).with_show_download_progress(true),
-        )
-        .map_err(|e| IcmError::Embedding(format!("failed to init model: {e}")))?;
+        let model =
+            TextEmbedding::try_new(InitOptions::new(emb_model).with_show_download_progress(true))
+                .map_err(|e| IcmError::Embedding(format!("failed to init model: {e}")))?;
         let _ = self.model.set(model);
         Ok(self.model.get().unwrap())
     }

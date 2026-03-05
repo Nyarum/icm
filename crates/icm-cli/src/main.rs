@@ -469,10 +469,13 @@ fn main() -> Result<()> {
     let cfg = config::load_config()?;
     #[allow(unused_variables)]
     let embedder = init_embedder(&cfg.embeddings.model);
-    let embedding_dims = embedder.as_ref().map(|e| {
-        use icm_core::Embedder;
-        e.dimensions()
-    }).unwrap_or(384);
+    let embedding_dims = embedder
+        .as_ref()
+        .map(|e| {
+            use icm_core::Embedder;
+            e.dimensions()
+        })
+        .unwrap_or(384);
     let store = open_store(cli.db, embedding_dims)?;
 
     match cli.command {
@@ -835,24 +838,71 @@ fn cmd_init(mode: InitMode) -> Result<()> {
         // Standard JSON tools: (name, path, json_key)
         let tools: Vec<(&str, PathBuf, &str)> = vec![
             // --- Editors & IDEs ---
-            ("Claude Code", PathBuf::from(&home).join(".claude.json"), "mcpServers"),
-            ("Claude Desktop", PathBuf::from(&home).join("Library/Application Support/Claude/claude_desktop_config.json"), "mcpServers"),
-            ("Cursor", PathBuf::from(&home).join(".cursor/mcp.json"), "mcpServers"),
-            ("Windsurf", PathBuf::from(&home).join(".codeium/windsurf/mcp_config.json"), "mcpServers"),
+            (
+                "Claude Code",
+                PathBuf::from(&home).join(".claude.json"),
+                "mcpServers",
+            ),
+            (
+                "Claude Desktop",
+                PathBuf::from(&home)
+                    .join("Library/Application Support/Claude/claude_desktop_config.json"),
+                "mcpServers",
+            ),
+            (
+                "Cursor",
+                PathBuf::from(&home).join(".cursor/mcp.json"),
+                "mcpServers",
+            ),
+            (
+                "Windsurf",
+                PathBuf::from(&home).join(".codeium/windsurf/mcp_config.json"),
+                "mcpServers",
+            ),
             ("VS Code", vscode_data.join("mcp.json"), "servers"),
-            ("Gemini", PathBuf::from(&home).join(".gemini/settings.json"), "mcpServers"),
-            ("Zed", if cfg!(target_os = "macos") {
-                PathBuf::from(&home).join(".zed/settings.json")
-            } else {
-                PathBuf::from(&home).join(".config/zed/settings.json")
-            }, "context_servers"),
+            (
+                "Gemini",
+                PathBuf::from(&home).join(".gemini/settings.json"),
+                "mcpServers",
+            ),
+            (
+                "Zed",
+                if cfg!(target_os = "macos") {
+                    PathBuf::from(&home).join(".zed/settings.json")
+                } else {
+                    PathBuf::from(&home).join(".config/zed/settings.json")
+                },
+                "context_servers",
+            ),
             // --- Terminal tools ---
-            ("Amp", PathBuf::from(&home).join(".config/amp/settings.json"), "amp.mcpServers"),
-            ("Amazon Q", PathBuf::from(&home).join(".aws/amazonq/mcp.json"), "mcpServers"),
+            (
+                "Amp",
+                PathBuf::from(&home).join(".config/amp/settings.json"),
+                "amp.mcpServers",
+            ),
+            (
+                "Amazon Q",
+                PathBuf::from(&home).join(".aws/amazonq/mcp.json"),
+                "mcpServers",
+            ),
             // --- VS Code extensions ---
-            ("Cline", vscode_data.join("globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"), "mcpServers"),
-            ("Roo Code", vscode_data.join("globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"), "mcpServers"),
-            ("Kilo Code", vscode_data.join("globalStorage/kilocode.kilo-code/settings/mcp_settings.json"), "mcpServers"),
+            (
+                "Cline",
+                vscode_data
+                    .join("globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"),
+                "mcpServers",
+            ),
+            (
+                "Roo Code",
+                vscode_data
+                    .join("globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"),
+                "mcpServers",
+            ),
+            (
+                "Kilo Code",
+                vscode_data.join("globalStorage/kilocode.kilo-code/settings/mcp_settings.json"),
+                "mcpServers",
+            ),
         ];
 
         for (name, config_path, key) in &tools {
@@ -932,8 +982,18 @@ icm store -t \"note\" -c \"$ARGUMENTS\"
 
         // Claude Code: ~/.claude/commands/
         let claude_skills_dir = PathBuf::from(&home).join(".claude/commands");
-        install_skill(&claude_skills_dir, "recall.md", icm_recall_prompt, "Claude Code /recall")?;
-        install_skill(&claude_skills_dir, "remember.md", icm_remember_prompt, "Claude Code /remember")?;
+        install_skill(
+            &claude_skills_dir,
+            "recall.md",
+            icm_recall_prompt,
+            "Claude Code /recall",
+        )?;
+        install_skill(
+            &claude_skills_dir,
+            "remember.md",
+            icm_remember_prompt,
+            "Claude Code /remember",
+        )?;
 
         // Cursor: ~/.cursor/rules/ (project or global)
         let cursor_rules_dir = PathBuf::from(&home).join(".cursor/rules");
@@ -960,8 +1020,18 @@ After completing significant work, store a summary:
 
         // Amp: ~/.config/amp/skills/
         let amp_skills_dir = PathBuf::from(&home).join(".config/amp/skills");
-        install_skill(&amp_skills_dir, "icm-recall.md", icm_recall_prompt, "Amp /icm-recall")?;
-        install_skill(&amp_skills_dir, "icm-remember.md", icm_remember_prompt, "Amp /icm-remember")?;
+        install_skill(
+            &amp_skills_dir,
+            "icm-recall.md",
+            icm_recall_prompt,
+            "Amp /icm-recall",
+        )?;
+        install_skill(
+            &amp_skills_dir,
+            "icm-remember.md",
+            icm_remember_prompt,
+            "Amp /icm-remember",
+        )?;
     }
 
     println!();
@@ -1011,10 +1081,10 @@ fn inject_mcp_server(
     // Support nested keys like "amp.mcpServers"
     let mcp_servers = if servers_key.contains('.') {
         let parts: Vec<&str> = servers_key.split('.').collect();
-        let obj = config.as_object_mut().context("config is not a JSON object")?;
-        let parent = obj
-            .entry(parts[0])
-            .or_insert_with(|| serde_json::json!({}));
+        let obj = config
+            .as_object_mut()
+            .context("config is not a JSON object")?;
+        let parent = obj.entry(parts[0]).or_insert_with(|| serde_json::json!({}));
         parent
             .as_object_mut()
             .context("nested key is not an object")?
@@ -1050,11 +1120,7 @@ fn inject_mcp_server(
 }
 
 /// Inject ICM MCP server into Codex CLI TOML config. Returns a status string.
-fn inject_codex_mcp_server(
-    config_path: &PathBuf,
-    name: &str,
-    icm_bin: &str,
-) -> Result<String> {
+fn inject_codex_mcp_server(config_path: &PathBuf, name: &str, icm_bin: &str) -> Result<String> {
     let mut config: toml::Value = if config_path.exists() {
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("cannot read {}", config_path.display()))?;
@@ -1084,10 +1150,7 @@ fn inject_codex_mcp_server(
     }
 
     let mut server = toml::map::Map::new();
-    server.insert(
-        "command".into(),
-        toml::Value::String(icm_bin.to_string()),
-    );
+    server.insert("command".into(), toml::Value::String(icm_bin.to_string()));
     server.insert(
         "args".into(),
         toml::Value::Array(vec![toml::Value::String("serve".into())]),
@@ -1106,11 +1169,7 @@ fn inject_codex_mcp_server(
 }
 
 /// Inject ICM MCP server into OpenCode config (uses "mcp" key, command is array).
-fn inject_opencode_mcp_server(
-    config_path: &PathBuf,
-    name: &str,
-    icm_bin: &str,
-) -> Result<String> {
+fn inject_opencode_mcp_server(config_path: &PathBuf, name: &str, icm_bin: &str) -> Result<String> {
     let mut config: Value = if config_path.exists() {
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("cannot read {}", config_path.display()))?;
@@ -1137,13 +1196,14 @@ fn inject_opencode_mcp_server(
         }
     }
 
-    mcp.as_object_mut()
-        .unwrap()
-        .insert(name.to_string(), serde_json::json!({
+    mcp.as_object_mut().unwrap().insert(
+        name.to_string(),
+        serde_json::json!({
             "type": "local",
             "command": [icm_bin, "serve"],
             "enabled": true
-        }));
+        }),
+    );
 
     let output = serde_json::to_string_pretty(&config)?;
     std::fs::write(config_path, output)

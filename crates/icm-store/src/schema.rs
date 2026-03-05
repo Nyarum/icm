@@ -216,9 +216,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
                 |row| row.get(0),
             )
             .ok();
-        let stored: usize = stored_dims
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(384);
+        let stored: usize = stored_dims.and_then(|s| s.parse().ok()).unwrap_or(384);
         if stored != embedding_dims {
             // Model changed — drop vec table and clear embeddings
             conn.execute_batch("DROP TABLE IF EXISTS vec_memories")

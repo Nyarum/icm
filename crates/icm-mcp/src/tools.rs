@@ -431,7 +431,12 @@ fn resolve_memoir(store: &SqliteStore, name: &str) -> Result<Memoir, ToolResult>
 // Memory tool handlers
 // ---------------------------------------------------------------------------
 
-fn tool_store(store: &SqliteStore, embedder: Option<&dyn Embedder>, args: &Value, compact: bool) -> ToolResult {
+fn tool_store(
+    store: &SqliteStore,
+    embedder: Option<&dyn Embedder>,
+    args: &Value,
+    compact: bool,
+) -> ToolResult {
     let topic = match get_str(args, "topic") {
         Some(t) => t,
         None => return ToolResult::error("missing required field: topic".into()),
@@ -532,7 +537,12 @@ fn tool_store(store: &SqliteStore, embedder: Option<&dyn Embedder>, args: &Value
     }
 }
 
-fn tool_recall(store: &SqliteStore, embedder: Option<&dyn Embedder>, args: &Value, compact: bool) -> ToolResult {
+fn tool_recall(
+    store: &SqliteStore,
+    embedder: Option<&dyn Embedder>,
+    args: &Value,
+    compact: bool,
+) -> ToolResult {
     // Auto-decay if >24h since last decay
     let _ = store.maybe_auto_decay();
 
