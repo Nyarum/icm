@@ -10,7 +10,7 @@ set -euo pipefail
 
 # Config
 EXTRACT_EVERY=15           # Extract every N tool calls
-COUNTER_FILE="${ICM_HOOK_COUNTER:-/tmp/icm-hook-counter-$$}"
+COUNTER_FILE="${ICM_HOOK_COUNTER:-/tmp/icm-hook-counter}"
 ICM_BIN="${ICM_BIN:-icm}"
 
 # Read hook input
