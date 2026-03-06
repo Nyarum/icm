@@ -1188,6 +1188,7 @@ name = "icm-core"
 version = "0.10.0"
 dependencies = [
  "chrono",
+ "directories",
  "fastembed",
  "serde",
  "serde_json",

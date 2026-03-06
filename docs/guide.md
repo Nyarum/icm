@@ -824,3 +824,32 @@ Le serveur compte les appels d'outils consecutifs sans `icm_memory_store`. Apres
 [ICM: 12 tool calls since last store. Consider saving important context.]
 ```
 Le compteur se reinitialise a chaque `icm_memory_store`. C'est un rappel discret pour que l'agent n'oublie pas de stocker.
+
+## Troubleshooting
+
+**Agent doesn't use ICM tools**
+- Run `icm init` and check the output for errors
+- Verify the MCP config file exists for your tool
+- Test manually: `echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' | icm serve`
+- Check `icm serve` starts without errors
+
+**Recall returns nothing**
+- `icm topics` — are there stored memories?
+- `icm stats` — check total count
+- Try broader queries or remove topic/keyword filters
+- `icm health` — check if memories decayed too much
+
+**Embeddings slow on first run**
+- Normal: model downloads on first use (~100MB for multilingual-e5-base)
+- Subsequent runs load from cache (~1-2s)
+- Build without embeddings: `cargo build --no-default-features`
+
+**Duplicate memories**
+- Auto-dedup works via MCP (>85% similarity in same topic → update)
+- CLI `icm store` does not auto-dedup (no embedder in basic mode)
+- Backfill embeddings: `icm embed`, then dedup happens on next store
+
+**Database issues**
+- WAL mode: safe for concurrent reads, single writer
+- Corruption: `icm stats` will fail → delete DB file and re-populate
+- Migration: automatic on startup, no manual steps needed
