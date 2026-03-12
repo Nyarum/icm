@@ -127,6 +127,21 @@ enum Commands {
         command: FeedbackCommands,
     },
 
+    /// Detect recurring patterns in a topic and optionally create memoir concepts
+    ExtractPatterns {
+        /// Topic to analyze
+        #[arg(short, long)]
+        topic: String,
+
+        /// Memoir name — if provided, creates concepts from detected patterns
+        #[arg(short, long)]
+        memoir: Option<String>,
+
+        /// Minimum cluster size to form a pattern (default: 3)
+        #[arg(long, default_value = "3")]
+        min_cluster_size: usize,
+    },
+
     /// List all topics
     Topics,
 
@@ -691,6 +706,11 @@ fn main() -> Result<()> {
             } => cmd_feedback_search(&store, &query, topic.as_deref(), limit),
             FeedbackCommands::Stats => cmd_feedback_stats(&store),
         },
+        Commands::ExtractPatterns {
+            topic,
+            memoir,
+            min_cluster_size,
+        } => cmd_extract_patterns(&store, &topic, memoir.as_deref(), min_cluster_size),
         Commands::Topics => cmd_topics(&store),
         Commands::Stats => cmd_stats(&store),
         Commands::Decay { factor } => cmd_decay(&store, factor),
@@ -1296,6 +1316,113 @@ fn cmd_prune(store: &SqliteStore, threshold: f32, dry_run: bool) -> Result<()> {
         let pruned = store.prune(threshold)?;
         println!("Pruned {pruned} memories (threshold={threshold}).");
     }
+    Ok(())
+}
+
+fn cmd_update(
+    store: &SqliteStore,
+    id: &str,
+    content: String,
+    importance: Option<CliImportance>,
+    keywords: Option<String>,
+) -> Result<()> {
+    let mut memory = store
+        .get(id)?
+        .ok_or_else(|| anyhow::anyhow!("Memory not found: {id}"))?;
+
+    memory.summary = content;
+    memory.updated_at = chrono::Utc::now();
+    memory.weight = 1.0; // reset weight on update
+
+    if let Some(imp) = importance {
+        memory.importance = imp.into();
+    }
+    if let Some(kw) = keywords {
+        memory.keywords = kw.split(',').map(|s| s.trim().to_string()).collect();
+    }
+
+    store.update(&memory)?;
+    println!("Updated: {id}");
+    Ok(())
+}
+
+fn cmd_health(store: &SqliteStore, topic: Option<&str>) -> Result<()> {
+    let topics_to_check = if let Some(t) = topic {
+        vec![(t.to_string(), 0usize)]
+    } else {
+        store.list_topics()?
+    };
+
+    if topics_to_check.is_empty() {
+        println!("No topics yet.");
+        return Ok(());
+    }
+
+    println!(
+        "{:<25} {:>5} {:>8} {:>8} {:>6} {:>12}",
+        "Topic", "Count", "Avg Wt", "Avg Acc", "Stale", "Consolidate?"
+    );
+    println!("{}", "-".repeat(72));
+
+    for (t, _) in &topics_to_check {
+        match store.topic_health(t) {
+            Ok(h) => {
+                let consol = if h.needs_consolidation { "YES" } else { "no" };
+                println!(
+                    "{:<25} {:>5} {:>8.3} {:>8.1} {:>6} {:>12}",
+                    h.topic, h.entry_count, h.avg_weight, h.avg_access_count, h.stale_count, consol
+                );
+            }
+            Err(_) => continue,
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_extract_patterns(
+    store: &SqliteStore,
+    topic: &str,
+    memoir: Option<&str>,
+    min_cluster_size: usize,
+) -> Result<()> {
+    let patterns = store.detect_patterns(topic, min_cluster_size)?;
+
+    if patterns.is_empty() {
+        println!("No patterns detected in topic '{topic}' (min cluster size: {min_cluster_size}).");
+        return Ok(());
+    }
+
+    println!("Detected {} pattern(s) in topic '{topic}':\n", patterns.len());
+
+    for (i, cluster) in patterns.iter().enumerate() {
+        println!(
+            "  Pattern #{}: {} memories, keywords: [{}]",
+            i + 1,
+            cluster.count,
+            cluster.keywords.join(", ")
+        );
+        println!("    Summary: {}", &cluster.representative_summary[..cluster.representative_summary.len().min(120)]);
+    }
+
+    if let Some(memoir_name) = memoir {
+        // Resolve memoir
+        let memoirs = store.list_memoirs()?;
+        let memoir_obj = memoirs
+            .iter()
+            .find(|m| m.name == memoir_name)
+            .ok_or_else(|| anyhow::anyhow!("Memoir '{memoir_name}' not found. Create it first with `icm memoir create -n {memoir_name}`"))?;
+
+        println!("\nCreating concepts in memoir '{memoir_name}'...");
+        for cluster in &patterns {
+            let concept_id = store.extract_pattern_as_concept(cluster, &memoir_obj.id)?;
+            println!("  Created concept: {concept_id}");
+        }
+        println!("Done. {} concept(s) created.", patterns.len());
+    } else {
+        println!("\nTo create concepts from these patterns, add --memoir <name>.");
+    }
+
     Ok(())
 }
 
