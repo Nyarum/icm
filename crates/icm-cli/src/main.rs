@@ -1216,16 +1216,27 @@ fn cmd_init(mode: InitMode) -> Result<()> {
 <!-- icm:start -->\n\
 ## Persistent memory (ICM)\n\
 \n\
-This project uses [ICM](https://github.com/rtk-ai/icm) for persistent memory.\n\
+This project uses [ICM](https://github.com/rtk-ai/icm) for persistent memory across sessions.\n\
 \n\
-After completing a significant task, store a summary:\n\
+### Recall (before starting work)\n\
 ```bash\n\
-icm store -t \"project\" -c \"Short summary of what was done\"\n\
+icm recall \"topic keywords\"              # search memories\n\
+icm recall-context \"query\" --limit 5     # formatted for prompt injection\n\
 ```\n\
 \n\
-Before starting work, recall relevant context:\n\
+### Store (after completing significant work)\n\
 ```bash\n\
-icm recall \"topic keywords\"\n\
+icm store -t \"topic\" -c \"summary\" -i medium   # importance: critical|high|medium|low\n\
+icm store -t \"decisions\" -c \"chose X over Y because...\" -i high\n\
+icm store -t \"errors-resolved\" -c \"fix: ...\" -k \"error,fix\"\n\
+```\n\
+\n\
+### Other commands\n\
+```bash\n\
+icm update <id> -c \"updated content\"     # edit memory in-place\n\
+icm health                                # topic hygiene audit\n\
+icm topics                                # list all topics\n\
+icm feedback record -t \"topic\" -c \"context\" -p \"predicted\" --corrected \"actual\"\n\
 ```\n\
 <!-- icm:end -->";
 
@@ -1252,7 +1263,7 @@ icm recall \"topic keywords\"\n\
         let icm_recall_prompt = "\
 Search ICM memory for: $ARGUMENTS
 
-Use the icm_memory_recall MCP tool if available, otherwise run:
+Run:
 ```bash
 icm recall \"$ARGUMENTS\"
 ```
@@ -1260,7 +1271,7 @@ icm recall \"$ARGUMENTS\"
         let icm_remember_prompt = "\
 Store the following in ICM memory: $ARGUMENTS
 
-Use the icm_memory_store MCP tool if available, otherwise run:
+Run:
 ```bash
 icm store -t \"note\" -c \"$ARGUMENTS\"
 ```
@@ -1293,10 +1304,14 @@ alwaysApply: true
 This project uses ICM (Infinite Context Memory) for persistent memory.
 
 At the start of each task, recall relevant context:
-- Use `icm_memory_recall` MCP tool or run `icm recall \"topic\"`
+```bash
+icm recall \"topic keywords\"
+```
 
 After completing significant work, store a summary:
-- Use `icm_memory_store` MCP tool or run `icm store -t \"topic\" -c \"summary\"`
+```bash
+icm store -t \"topic\" -c \"summary\"
+```
 ";
         install_skill(&cursor_rules_dir, "icm.mdc", cursor_icm_rule, "Cursor rule")?;
 
@@ -1320,30 +1335,47 @@ After completing significant work, store a summary:
         )?;
     }
 
-    // --- Hook mode: install Claude Code PostToolUse hook ---
+    // --- Hook mode: install Claude Code PreToolUse + PostToolUse hooks ---
     if do_hook {
         let claude_settings_path = PathBuf::from(&home).join(".claude/settings.json");
         let hook_dir = PathBuf::from(&home).join(".claude/hooks");
         std::fs::create_dir_all(&hook_dir).ok();
 
-        // Write the hook script
-        let hook_script_path = hook_dir.join("icm-post-tool.sh");
-        let hook_script = include_str!("../../../scripts/hooks/icm-post-tool.sh");
-        if hook_script_path.exists() {
-            println!("[hook] icm-post-tool.sh already exists, updating.");
+        // Write the PreToolUse hook (auto-allow icm commands)
+        let pretool_path = hook_dir.join("icm-pretool.sh");
+        let pretool_script = include_str!("../../../scripts/hooks/icm-pretool.sh");
+        if pretool_path.exists() {
+            println!("[hook] icm-pretool.sh already exists, updating.");
         }
-        std::fs::write(&hook_script_path, hook_script).context("cannot write hook script")?;
+        std::fs::write(&pretool_path, pretool_script).context("cannot write pretool hook")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hook_script_path, std::fs::Permissions::from_mode(0o755))
-                .ok();
+            std::fs::set_permissions(&pretool_path, std::fs::Permissions::from_mode(0o755)).ok();
         }
 
-        // Inject into settings.json
-        let hook_cmd = hook_script_path.to_string_lossy().to_string();
-        let status = inject_claude_hook(&claude_settings_path, &hook_cmd)?;
-        println!("[hook] Claude Code PostToolUse: {status}");
+        // Write the PostToolUse hook (auto-extract context)
+        let posttool_path = hook_dir.join("icm-post-tool.sh");
+        let posttool_script = include_str!("../../../scripts/hooks/icm-post-tool.sh");
+        if posttool_path.exists() {
+            println!("[hook] icm-post-tool.sh already exists, updating.");
+        }
+        std::fs::write(&posttool_path, posttool_script).context("cannot write posttool hook")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&posttool_path, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+
+        // Inject PreToolUse hook (Bash matcher — auto-allow icm commands)
+        let pretool_cmd = pretool_path.to_string_lossy().to_string();
+        let pre_status = inject_claude_pretool_hook(&claude_settings_path, &pretool_cmd)?;
+        println!("[hook] Claude Code PreToolUse (auto-allow): {pre_status}");
+
+        // Inject PostToolUse hook (auto-extract context)
+        let posttool_cmd = posttool_path.to_string_lossy().to_string();
+        let post_status = inject_claude_hook(&claude_settings_path, &posttool_cmd)?;
+        println!("[hook] Claude Code PostToolUse (auto-extract): {post_status}");
     }
 
     println!();
@@ -1404,6 +1436,70 @@ fn inject_claude_hook(settings_path: &PathBuf, hook_command: &str) -> Result<Str
 
     // Add ICM hook entry (matches all tools except ICM's own)
     post_tool_arr.push(serde_json::json!({
+        "hooks": [{
+            "type": "command",
+            "command": hook_command
+        }]
+    }));
+
+    let output = serde_json::to_string_pretty(&config)?;
+    std::fs::write(settings_path, output)
+        .with_context(|| format!("cannot write {}", settings_path.display()))?;
+
+    Ok("configured".into())
+}
+
+/// Inject ICM PreToolUse hook into Claude Code settings.json
+/// This hook auto-allows `icm` CLI commands (no permission prompt).
+fn inject_claude_pretool_hook(settings_path: &PathBuf, hook_command: &str) -> Result<String> {
+    let mut config: Value = if settings_path.exists() {
+        let content = std::fs::read_to_string(settings_path)
+            .with_context(|| format!("cannot read {}", settings_path.display()))?;
+        serde_json::from_str(&content)
+            .with_context(|| format!("cannot parse {}", settings_path.display()))?
+    } else {
+        serde_json::json!({})
+    };
+
+    let hooks = config
+        .as_object_mut()
+        .context("settings is not a JSON object")?
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}));
+
+    let pre_tool = hooks
+        .as_object_mut()
+        .context("hooks is not a JSON object")?
+        .entry("PreToolUse")
+        .or_insert_with(|| serde_json::json!([]));
+
+    let pre_tool_arr = pre_tool
+        .as_array_mut()
+        .context("PreToolUse is not an array")?;
+
+    // Check if ICM pretool hook already exists
+    let already = pre_tool_arr.iter().any(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .map(|hooks| {
+                hooks.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c.contains("icm-pretool"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    });
+
+    if already {
+        return Ok("already configured".into());
+    }
+
+    // Add ICM PreToolUse hook entry (matcher: Bash — auto-allow icm commands)
+    pre_tool_arr.push(serde_json::json!({
+        "matcher": "Bash",
         "hooks": [{
             "type": "command",
             "command": hook_command
