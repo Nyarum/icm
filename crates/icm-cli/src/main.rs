@@ -264,6 +264,24 @@ enum Commands {
         #[arg(long)]
         compact: bool,
     },
+
+    /// Claude Code hook handlers (read JSON from stdin, output hook response)
+    Hook {
+        #[command(subcommand)]
+        command: HookCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCommands {
+    /// PreToolUse hook: auto-allow `icm` CLI commands (no permission prompt)
+    Pre,
+    /// PostToolUse hook: auto-extract context every N tool calls
+    Post {
+        /// Extract every N tool calls
+        #[arg(long, default_value = "15")]
+        every: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -726,6 +744,10 @@ fn main() -> Result<()> {
             let use_compact = compact || cfg.mcp.compact;
             icm_mcp::run_server(&store, emb_ref, use_compact)
         }
+        Commands::Hook { command } => match command {
+            HookCommands::Pre => cmd_hook_pre(),
+            HookCommands::Post { every } => cmd_hook_post(&store, every),
+        },
     }
 }
 
@@ -1039,6 +1061,143 @@ fn cmd_feedback_stats(store: &SqliteStore) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Hook commands (full Rust, no shell scripts)
+// ---------------------------------------------------------------------------
+
+/// PreToolUse hook: auto-allow `icm` CLI commands.
+/// Reads JSON from stdin, outputs hook response JSON to stdout.
+fn cmd_hook_pre() -> Result<()> {
+    use std::io::Read;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+
+    let json: Value = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(_) => return Ok(()), // Malformed input — pass through silently
+    };
+
+    // Only handle Bash tool calls
+    let tool_name = json.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    if tool_name != "Bash" {
+        return Ok(());
+    }
+
+    let cmd = json
+        .pointer("/tool_input/command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if cmd.is_empty() {
+        return Ok(());
+    }
+
+    // Check if command involves `icm`
+    if !is_icm_command(cmd) {
+        return Ok(());
+    }
+
+    // Auto-allow: output hook response JSON
+    let tool_input = json
+        .get("tool_input")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let response = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "ICM auto-allow",
+            "updatedInput": tool_input
+        }
+    });
+
+    println!("{}", serde_json::to_string(&response)?);
+    Ok(())
+}
+
+/// Check if a bash command involves `icm`.
+fn is_icm_command(cmd: &str) -> bool {
+    // Split on shell operators and check each segment
+    for segment in cmd.split(['&', '|', ';']) {
+        let trimmed = segment.trim().trim_start_matches('(');
+        if trimmed == "icm" || trimmed.starts_with("icm ") {
+            return true;
+        }
+    }
+    false
+}
+
+/// PostToolUse hook: auto-extract context every N tool calls.
+/// Reads JSON from stdin. Runs extraction asynchronously.
+fn cmd_hook_post(store: &SqliteStore, extract_every: usize) -> Result<()> {
+    use std::io::Read;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+
+    let json: Value = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    let tool_name = json.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Skip ICM's own tools (avoid infinite loop)
+    if tool_name.starts_with("icm_") || tool_name.starts_with("mcp__icm__") {
+        return Ok(());
+    }
+
+    // Counter file for tracking tool calls between invocations
+    let counter_file =
+        std::env::var("ICM_HOOK_COUNTER").unwrap_or_else(|_| "/tmp/icm-hook-counter".to_string());
+
+    let mut count: usize = std::fs::read_to_string(&counter_file)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    // Reset on voluntary store
+    if tool_name == "icm_memory_store" || tool_name == "mcp__icm__icm_memory_store" {
+        let _ = std::fs::write(&counter_file, "0");
+        return Ok(());
+    }
+
+    count += 1;
+    let _ = std::fs::write(&counter_file, count.to_string());
+
+    // Not time to extract yet
+    if count < extract_every {
+        return Ok(());
+    }
+
+    // Reset counter
+    let _ = std::fs::write(&counter_file, "0");
+
+    // Extract from tool output
+    let tool_output = json
+        .get("tool_output")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if tool_output.is_empty() {
+        return Ok(());
+    }
+
+    // Get project name from cwd
+    let project = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "project".to_string());
+
+    // Extract facts and store directly
+    match extract::extract_and_store(store, tool_output, &project) {
+        Ok(n) if n > 0 => eprintln!("[icm] auto-extracted {n} facts from tool output"),
+        _ => {}
+    }
+
+    Ok(())
+}
+
 fn cmd_topics(store: &SqliteStore) -> Result<()> {
     let topics = store.list_topics()?;
     if topics.is_empty() {
@@ -1335,46 +1494,18 @@ icm store -t \"topic\" -c \"summary\"
         )?;
     }
 
-    // --- Hook mode: install Claude Code PreToolUse + PostToolUse hooks ---
+    // --- Hook mode: install Claude Code hooks (full Rust, no shell scripts) ---
     if do_hook {
         let claude_settings_path = PathBuf::from(&home).join(".claude/settings.json");
-        let hook_dir = PathBuf::from(&home).join(".claude/hooks");
-        std::fs::create_dir_all(&hook_dir).ok();
 
-        // Write the PreToolUse hook (auto-allow icm commands)
-        let pretool_path = hook_dir.join("icm-pretool.sh");
-        let pretool_script = include_str!("../../../scripts/hooks/icm-pretool.sh");
-        if pretool_path.exists() {
-            println!("[hook] icm-pretool.sh already exists, updating.");
-        }
-        std::fs::write(&pretool_path, pretool_script).context("cannot write pretool hook")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&pretool_path, std::fs::Permissions::from_mode(0o755)).ok();
-        }
-
-        // Write the PostToolUse hook (auto-extract context)
-        let posttool_path = hook_dir.join("icm-post-tool.sh");
-        let posttool_script = include_str!("../../../scripts/hooks/icm-post-tool.sh");
-        if posttool_path.exists() {
-            println!("[hook] icm-post-tool.sh already exists, updating.");
-        }
-        std::fs::write(&posttool_path, posttool_script).context("cannot write posttool hook")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&posttool_path, std::fs::Permissions::from_mode(0o755)).ok();
-        }
-
-        // Inject PreToolUse hook (Bash matcher — auto-allow icm commands)
-        let pretool_cmd = pretool_path.to_string_lossy().to_string();
-        let pre_status = inject_claude_pretool_hook(&claude_settings_path, &pretool_cmd)?;
+        // PreToolUse hook: `icm hook pre` (auto-allow icm commands)
+        let pre_cmd = format!("{} hook pre", icm_bin_str);
+        let pre_status = inject_claude_pretool_hook(&claude_settings_path, &pre_cmd)?;
         println!("[hook] Claude Code PreToolUse (auto-allow): {pre_status}");
 
-        // Inject PostToolUse hook (auto-extract context)
-        let posttool_cmd = posttool_path.to_string_lossy().to_string();
-        let post_status = inject_claude_hook(&claude_settings_path, &posttool_cmd)?;
+        // PostToolUse hook: `icm hook post` (auto-extract context)
+        let post_cmd = format!("{} hook post", icm_bin_str);
+        let post_status = inject_claude_hook(&claude_settings_path, &post_cmd)?;
         println!("[hook] Claude Code PostToolUse (auto-extract): {post_status}");
     }
 
@@ -1423,7 +1554,7 @@ fn inject_claude_hook(settings_path: &PathBuf, hook_command: &str) -> Result<Str
                 hooks.iter().any(|h| {
                     h.get("command")
                         .and_then(|c| c.as_str())
-                        .map(|c| c.contains("icm-post-tool"))
+                        .map(|c| c.contains("icm-post-tool") || c.contains("icm hook post"))
                         .unwrap_or(false)
                 })
             })
@@ -1434,7 +1565,7 @@ fn inject_claude_hook(settings_path: &PathBuf, hook_command: &str) -> Result<Str
         return Ok("already configured".into());
     }
 
-    // Add ICM hook entry (matches all tools except ICM's own)
+    // Add ICM PostToolUse hook entry
     post_tool_arr.push(serde_json::json!({
         "hooks": [{
             "type": "command",
@@ -1486,7 +1617,7 @@ fn inject_claude_pretool_hook(settings_path: &PathBuf, hook_command: &str) -> Re
                 hooks.iter().any(|h| {
                     h.get("command")
                         .and_then(|c| c.as_str())
-                        .map(|c| c.contains("icm-pretool"))
+                        .map(|c| c.contains("icm-pretool") || c.contains("icm hook pre"))
                         .unwrap_or(false)
                 })
             })
