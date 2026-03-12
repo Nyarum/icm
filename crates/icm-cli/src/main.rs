@@ -1366,10 +1366,9 @@ fn cmd_init(mode: InitMode) -> Result<()> {
         println!("[mcp] {:<16} {opencode_status}", "OpenCode");
     }
 
-    // --- CLI mode: inject CLAUDE.md instructions ---
+    // --- CLI mode: inject instructions into each tool's file ---
     if do_cli {
         let cwd = std::env::current_dir().context("failed to get current directory")?;
-        let claude_md_path = cwd.join("CLAUDE.md");
 
         let icm_block = "\
 <!-- icm:start -->\n\
@@ -1399,21 +1398,16 @@ icm feedback record -t \"topic\" -c \"context\" -p \"predicted\" --corrected \"a
 ```\n\
 <!-- icm:end -->";
 
-        if claude_md_path.exists() {
-            let content =
-                std::fs::read_to_string(&claude_md_path).context("failed to read CLAUDE.md")?;
-            if content.contains("<!-- icm:start -->") {
-                println!("[cli] CLAUDE.md already configured.");
-            } else {
-                let new_content = format!("{}\n\n{}\n", content.trim_end(), icm_block);
-                std::fs::write(&claude_md_path, new_content)
-                    .context("failed to write CLAUDE.md")?;
-                println!("[cli] CLAUDE.md configured with ICM instructions.");
-            }
-        } else {
-            std::fs::write(&claude_md_path, format!("{icm_block}\n"))
-                .context("failed to create CLAUDE.md")?;
-            println!("[cli] CLAUDE.md created with ICM instructions.");
+        // Each AI tool uses its own instruction file
+        let instruction_files: Vec<(&str, PathBuf)> = vec![
+            ("Claude Code", cwd.join("CLAUDE.md")),
+            ("Codex", cwd.join("AGENTS.md")),
+            ("Gemini", PathBuf::from(&home).join(".gemini/GEMINI.md")),
+        ];
+
+        for (tool_name, path) in &instruction_files {
+            let status = inject_icm_block(path, icm_block)?;
+            println!("[cli] {tool_name:<16} {status}");
         }
     }
 
@@ -1516,6 +1510,29 @@ icm store -t \"topic\" -c \"summary\"
     println!("Restart your AI tool to activate.");
 
     Ok(())
+}
+
+/// Inject ICM instruction block into a markdown file (CLAUDE.md, AGENTS.md, GEMINI.md, etc.)
+fn inject_icm_block(path: &PathBuf, block: &str) -> Result<String> {
+    if path.exists() {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read {}", path.display()))?;
+        if content.contains("<!-- icm:start -->") {
+            return Ok(format!("{} already configured", path.display()));
+        }
+        let new_content = format!("{}\n\n{}\n", content.trim_end(), block);
+        std::fs::write(path, new_content)
+            .with_context(|| format!("cannot write {}", path.display()))?;
+        Ok(format!("{} updated", path.display()))
+    } else {
+        // Create parent dir if needed
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(path, format!("{block}\n"))
+            .with_context(|| format!("cannot create {}", path.display()))?;
+        Ok(format!("{} created", path.display()))
+    }
 }
 
 /// Inject ICM PostToolUse hook into Claude Code settings.json
