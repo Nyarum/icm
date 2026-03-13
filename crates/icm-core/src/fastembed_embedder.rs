@@ -7,13 +7,17 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use crate::embedder::Embedder;
 use crate::error::{IcmError, IcmResult};
 
-/// Répertoire cache pour les modèles d'embedding.
-/// Utilise le cache utilisateur (~/.cache/icm/ sur Linux, ~/Library/Caches/dev.icm.icm/ sur macOS).
+/// Répertoire cache pour les modèles d'embedding (multi-OS via `directories`).
+/// macOS: ~/Library/Caches/dev.icm.icm/models/
+/// Linux: ~/.cache/icm/models/
+/// Windows: C:\Users\<user>\AppData\Local\icm\icm\cache\models\
 fn cache_dir() -> PathBuf {
     ProjectDirs::from("dev", "icm", "icm")
         .map(|dirs| dirs.cache_dir().join("models"))
         .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home)
                 .join(".cache")
                 .join("icm")
