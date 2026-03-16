@@ -1319,67 +1319,6 @@ fn cmd_prune(store: &SqliteStore, threshold: f32, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_update(
-    store: &SqliteStore,
-    id: &str,
-    content: String,
-    importance: Option<CliImportance>,
-    keywords: Option<String>,
-) -> Result<()> {
-    let mut memory = store
-        .get(id)?
-        .ok_or_else(|| anyhow::anyhow!("Memory not found: {id}"))?;
-
-    memory.summary = content;
-    memory.updated_at = chrono::Utc::now();
-    memory.weight = 1.0; // reset weight on update
-
-    if let Some(imp) = importance {
-        memory.importance = imp.into();
-    }
-    if let Some(kw) = keywords {
-        memory.keywords = kw.split(',').map(|s| s.trim().to_string()).collect();
-    }
-
-    store.update(&memory)?;
-    println!("Updated: {id}");
-    Ok(())
-}
-
-fn cmd_health(store: &SqliteStore, topic: Option<&str>) -> Result<()> {
-    let topics_to_check = if let Some(t) = topic {
-        vec![(t.to_string(), 0usize)]
-    } else {
-        store.list_topics()?
-    };
-
-    if topics_to_check.is_empty() {
-        println!("No topics yet.");
-        return Ok(());
-    }
-
-    println!(
-        "{:<25} {:>5} {:>8} {:>8} {:>6} {:>12}",
-        "Topic", "Count", "Avg Wt", "Avg Acc", "Stale", "Consolidate?"
-    );
-    println!("{}", "-".repeat(72));
-
-    for (t, _) in &topics_to_check {
-        match store.topic_health(t) {
-            Ok(h) => {
-                let consol = if h.needs_consolidation { "YES" } else { "no" };
-                println!(
-                    "{:<25} {:>5} {:>8.3} {:>8.1} {:>6} {:>12}",
-                    h.topic, h.entry_count, h.avg_weight, h.avg_access_count, h.stale_count, consol
-                );
-            }
-            Err(_) => continue,
-        }
-    }
-
-    Ok(())
-}
-
 fn cmd_extract_patterns(
     store: &SqliteStore,
     topic: &str,
@@ -3717,14 +3656,8 @@ fn cmd_cloud(command: CloudCommands, store: &SqliteStore) -> Result<()> {
                 std::io::stdin().read_line(&mut email)?;
                 let email = email.trim().to_string();
 
-                // Read password without echo using stty
                 eprint!("Password: ");
-                let _ = std::process::Command::new("stty").arg("-echo").status();
-                let mut pwd = String::new();
-                std::io::stdin().read_line(&mut pwd)?;
-                let _ = std::process::Command::new("stty").arg("echo").status();
-                eprintln!(); // newline after hidden input
-                let pwd = pwd.trim().to_string();
+                let pwd = rpassword::read_password().context("failed to read password")?;
 
                 cloud::login_password(&endpoint, &email, &pwd)?;
             } else {

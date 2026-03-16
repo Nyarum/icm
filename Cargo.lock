@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "icm-cli"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1176,6 +1176,7 @@ dependencies = [
  "icm-mcp",
  "icm-store",
  "openssl",
+ "rpassword",
  "serde",
  "serde_json",
  "toml",
@@ -1186,9 +1187,10 @@ dependencies = [
 
 [[package]]
 name = "icm-core"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
  "chrono",
+ "directories",
  "fastembed",
  "serde",
  "serde_json",
@@ -1198,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "icm-mcp"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1211,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "icm-store"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
  "chrono",
  "icm-core",
@@ -2319,6 +2321,16 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rpassword"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffc936cf8a7ea60c58f030fd36a612a48f440610214dc54bc36431f9ea0c3efb"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]

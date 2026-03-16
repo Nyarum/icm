@@ -1,7 +1,7 @@
 //! RTK Cloud client for ICM — login, credentials, and memory sync.
 //!
 //! Auth flow mirrors rtk-pro: OAuth browser login to cloud.rtk-ai.app,
-//! credentials stored at ~/.config/icm/credentials.json.
+//! credentials stored in the platform config directory.
 //!
 //! Cloud sync pushes project/org-scoped memories to the RTK Cloud API
 //! so teams can share context across sessions and users.
@@ -14,7 +14,7 @@ use icm_core::{Memory, Scope};
 
 // ── Credentials ─────────────────────────────────────────────────────────────
 
-/// Cloud credentials stored at ~/.config/icm/credentials.json
+/// Cloud credentials stored in the platform config directory.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Credentials {
     pub endpoint: String,
@@ -26,11 +26,9 @@ pub struct Credentials {
 }
 
 fn credentials_path() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home)
-        .join(".config")
-        .join("icm")
-        .join("credentials.json"))
+    let proj = directories::ProjectDirs::from("dev", "icm", "icm")
+        .context("unable to determine platform config directory")?;
+    Ok(proj.config_dir().join("credentials.json"))
 }
 
 pub fn load_credentials() -> Option<Credentials> {
