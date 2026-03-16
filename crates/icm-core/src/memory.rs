@@ -53,21 +53,16 @@ impl Memory {
 }
 
 /// Memory scope for cloud sync.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
     /// Personal memories (local only, default).
+    #[default]
     User,
     /// Shared within a project (synced to cloud).
     Project,
     /// Shared across the entire organization (synced to cloud).
     Org,
-}
-
-impl Default for Scope {
-    fn default() -> Self {
-        Self::User
-    }
 }
 
 impl fmt::Display for Scope {
