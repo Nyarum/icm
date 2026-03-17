@@ -147,7 +147,9 @@ jobs:
           if [ -z "$TAG" ]; then
             TAG="${{ github.event.release.tag_name }}"
           fi
-          VERSION="${TAG#v}"
+          # Strip tag prefixes: "icm-v0.10.1" → "0.10.1", "v0.10.1" → "0.10.1"
+          VERSION="${TAG#icm-v}"
+          VERSION="${VERSION#v}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
