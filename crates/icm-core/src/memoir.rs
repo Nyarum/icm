@@ -92,6 +92,32 @@ pub struct Concept {
 }
 
 impl Concept {
+    pub fn format_labels(&self) -> String {
+        self.labels
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    pub fn confidence_color(&self) -> &'static str {
+        if self.confidence >= 0.8 {
+            "#4CAF50"
+        } else if self.confidence >= 0.5 {
+            "#FFC107"
+        } else if self.confidence >= 0.3 {
+            "#FF9800"
+        } else {
+            "#F44336"
+        }
+    }
+
+    pub fn confidence_bar(&self) -> String {
+        let filled = (self.confidence * 5.0).round() as usize;
+        let empty = 5 - filled.min(5);
+        format!("{}{}", "#".repeat(filled), ".".repeat(empty))
+    }
+
     pub fn new(memoir_id: String, name: String, definition: String) -> Self {
         let now = Utc::now();
         Self {

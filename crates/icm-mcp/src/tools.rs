@@ -962,15 +962,7 @@ fn tool_health(store: &SqliteStore, args: &Value) -> ToolResult {
     for (topic, _) in &topics {
         match store.topic_health(topic) {
             Ok(health) => {
-                let status = if health.needs_consolidation && health.stale_count > 0 {
-                    "!! NEEDS ATTENTION"
-                } else if health.needs_consolidation {
-                    "!  consolidate"
-                } else if health.stale_count > 0 {
-                    "-  has stale entries"
-                } else {
-                    "ok healthy"
-                };
+                let status = health.status();
 
                 output.push_str(&format!(
                     "  {topic}: {status}\n    entries: {}  avg_weight: {:.2}  stale: {}  avg_access: {:.1}\n",
@@ -1208,12 +1200,7 @@ fn tool_memoir_show(store: &SqliteStore, args: &Value) -> ToolResult {
     if !concepts.is_empty() {
         output.push_str("\nConcepts:\n");
         for c in &concepts {
-            let labels_str = c
-                .labels
-                .iter()
-                .map(|l| l.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let labels_str = c.format_labels();
             output.push_str(&format!(
                 "  {} [r{} c{:.2}]{}\n    {}\n",
                 c.name,
@@ -1354,12 +1341,7 @@ fn tool_memoir_search(store: &SqliteStore, args: &Value) -> ToolResult {
 
     let mut output = String::new();
     for c in &results {
-        let labels_str = c
-            .labels
-            .iter()
-            .map(|l| l.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let labels_str = c.format_labels();
         output.push_str(&format!(
             "--- {} [r{} c{:.2}] ---\n  {}\n",
             c.name, c.revision, c.confidence, c.definition
@@ -1400,12 +1382,7 @@ fn tool_memoir_search_all(store: &SqliteStore, args: &Value) -> ToolResult {
     let mut output = String::new();
     for c in &results {
         let memoir_name = memoirs.get(&c.memoir_id).map(|s| s.as_str()).unwrap_or("?");
-        let labels_str = c
-            .labels
-            .iter()
-            .map(|l| l.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let labels_str = c.format_labels();
         output.push_str(&format!(
             "--- {} ({}) [r{} c{:.2}] ---\n  {}\n",
             c.name, memoir_name, c.revision, c.confidence, c.definition
@@ -1489,12 +1466,7 @@ fn tool_memoir_inspect(store: &SqliteStore, args: &Value) -> ToolResult {
         Err(e) => return ToolResult::error(format!("db error: {e}")),
     };
 
-    let labels_str = concept
-        .labels
-        .iter()
-        .map(|l| l.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let labels_str = concept.format_labels();
 
     let mut output = format!(
         "Concept: {}\n  id: {}\n  definition: {}\n  confidence: {:.2}\n  revision: {}\n",
@@ -1531,23 +1503,7 @@ fn tool_memoir_inspect(store: &SqliteStore, args: &Value) -> ToolResult {
     ToolResult::text(output)
 }
 
-fn confidence_color(confidence: f32) -> &'static str {
-    if confidence >= 0.8 {
-        "#4CAF50"
-    } else if confidence >= 0.5 {
-        "#FFC107"
-    } else if confidence >= 0.3 {
-        "#FF9800"
-    } else {
-        "#F44336"
-    }
-}
-
-fn confidence_bar(confidence: f32) -> String {
-    let filled = (confidence * 5.0).round() as usize;
-    let empty = 5 - filled.min(5);
-    format!("{}{}", "#".repeat(filled), ".".repeat(empty))
-}
+// confidence_color and confidence_bar are now methods on Concept in icm-core
 
 fn tool_memoir_export(store: &SqliteStore, args: &Value) -> ToolResult {
     let memoir_name = match get_str(args, "name") {
@@ -1628,7 +1584,7 @@ fn tool_memoir_export(store: &SqliteStore, args: &Value) -> ToolResult {
             );
             for c in &concepts {
                 let escaped = c.definition.replace('"', "\\\"");
-                let color = confidence_color(c.confidence);
+                let color = c.confidence_color();
                 out.push_str(&format!(
                     "  \"{}\" [tooltip=\"{}\" fillcolor=\"{}\" label=\"{}\\n({:.0}%)\"];\n",
                     c.name,
@@ -1690,20 +1646,13 @@ fn tool_memoir_export(store: &SqliteStore, args: &Value) -> ToolResult {
                 let labels_str = if c.labels.is_empty() {
                     String::new()
                 } else {
-                    format!(
-                        " [{}]",
-                        c.labels
-                            .iter()
-                            .map(|l| l.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                    format!(" [{}]", c.format_labels())
                 };
                 out.push_str(&format!(
                     "┌─ {}{} {}\n",
                     c.name,
                     labels_str,
-                    confidence_bar(c.confidence)
+                    c.confidence_bar()
                 ));
                 out.push_str(&format!("│  {}\n", c.definition));
                 if let Some(outs) = outgoing.get(c.name.as_str()) {
@@ -1727,14 +1676,7 @@ fn tool_memoir_export(store: &SqliteStore, args: &Value) -> ToolResult {
                 let labels_str = if c.labels.is_empty() {
                     String::new()
                 } else {
-                    format!(
-                        " [{}]",
-                        c.labels
-                            .iter()
-                            .map(|l| l.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                    format!(" [{}]", c.format_labels())
                 };
                 out.push_str(&format!(
                     "- **{}**{} (confidence: {:.0}%): {}\n",

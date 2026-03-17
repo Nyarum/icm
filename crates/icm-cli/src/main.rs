@@ -1077,15 +1077,7 @@ fn cmd_health(store: &SqliteStore, topic_filter: Option<&str>) -> Result<()> {
     for (topic, _) in &topics {
         match store.topic_health(topic) {
             Ok(health) => {
-                let status = if health.needs_consolidation && health.stale_count > 0 {
-                    "!! NEEDS ATTENTION"
-                } else if health.needs_consolidation {
-                    "!  consolidate"
-                } else if health.stale_count > 0 {
-                    "-  stale entries"
-                } else {
-                    "ok healthy"
-                };
+                let status = health.status();
 
                 println!(
                     "{:<30} {:<20} {:>7} {:>8.2} {:>6}",
@@ -3576,12 +3568,7 @@ fn cmd_memoir_show(store: &SqliteStore, name: &str) -> Result<()> {
     if !concepts.is_empty() {
         println!("\n  Concepts:");
         for c in &concepts {
-            let labels_str = c
-                .labels
-                .iter()
-                .map(|l| l.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let labels_str = c.format_labels();
             println!(
                 "    {} [r{} c{:.2}] {}",
                 c.name,
@@ -3706,12 +3693,7 @@ fn cmd_memoir_search_all(store: &SqliteStore, query: &str, limit: usize) -> Resu
         println!("  confidence: {:.2}", c.confidence);
         println!("  revision:   {}", c.revision);
         if !c.labels.is_empty() {
-            let labels_str = c
-                .labels
-                .iter()
-                .map(|l| l.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let labels_str = c.format_labels();
             println!("  labels:     {labels_str}");
         }
         println!();
@@ -3779,23 +3761,7 @@ fn cmd_memoir_inspect(
     Ok(())
 }
 
-fn confidence_color(confidence: f32) -> &'static str {
-    if confidence >= 0.8 {
-        "#4CAF50" // green
-    } else if confidence >= 0.5 {
-        "#FFC107" // amber
-    } else if confidence >= 0.3 {
-        "#FF9800" // orange
-    } else {
-        "#F44336" // red
-    }
-}
-
-fn confidence_bar(confidence: f32) -> String {
-    let filled = (confidence * 5.0).round() as usize;
-    let empty = 5 - filled.min(5);
-    format!("{}{}", "#".repeat(filled), ".".repeat(empty))
-}
+// confidence_color and confidence_bar are now methods on Concept in icm-core
 
 fn cmd_memoir_export(store: &SqliteStore, memoir_name: &str, format: &str) -> Result<()> {
     let memoir = resolve_memoir(store, memoir_name)?;
@@ -3864,7 +3830,7 @@ fn cmd_memoir_export(store: &SqliteStore, memoir_name: &str, format: &str) -> Re
             println!();
             for c in &concepts {
                 let escaped_def = c.definition.replace('"', "\\\"");
-                let color = confidence_color(c.confidence);
+                let color = c.confidence_color();
                 println!(
                     "  \"{}\" [tooltip=\"{}\" fillcolor=\"{}\" label=\"{}\\n({:.0}%)\"];",
                     c.name,
@@ -3920,21 +3886,9 @@ fn cmd_memoir_export(store: &SqliteStore, memoir_name: &str, format: &str) -> Re
                 let labels_str = if c.labels.is_empty() {
                     String::new()
                 } else {
-                    format!(
-                        " [{}]",
-                        c.labels
-                            .iter()
-                            .map(|l| l.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                    format!(" [{}]", c.format_labels())
                 };
-                println!(
-                    "┌─ {}{} {}",
-                    c.name,
-                    labels_str,
-                    confidence_bar(c.confidence)
-                );
+                println!("┌─ {}{} {}", c.name, labels_str, c.confidence_bar());
                 println!("│  {}", c.definition);
 
                 if let Some(outs) = outgoing.get(c.name.as_str()) {
@@ -3959,14 +3913,7 @@ fn cmd_memoir_export(store: &SqliteStore, memoir_name: &str, format: &str) -> Re
                 let labels_str = if c.labels.is_empty() {
                     String::new()
                 } else {
-                    format!(
-                        " [{}]",
-                        c.labels
-                            .iter()
-                            .map(|l| l.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                    format!(" [{}]", c.format_labels())
                 };
                 println!(
                     "- **{}**{} (confidence: {:.0}%): {}",
@@ -4052,12 +3999,7 @@ fn print_concept(c: &Concept) {
     println!("  confidence: {:.2}", c.confidence);
     println!("  revision:   {}", c.revision);
     if !c.labels.is_empty() {
-        let labels_str = c
-            .labels
-            .iter()
-            .map(|l| l.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let labels_str = c.format_labels();
         println!("  labels:     {labels_str}");
     }
     println!("  created:    {}", c.created_at.format("%Y-%m-%d %H:%M"));

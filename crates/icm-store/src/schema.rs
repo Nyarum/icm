@@ -14,6 +14,22 @@ fn fts_table_exists(conn: &Connection, name: &str) -> Result<bool, IcmError> {
     .map_err(db_err)
 }
 
+fn create_vec_table(conn: &Connection, embedding_dims: usize) -> Result<(), IcmError> {
+    conn.execute_batch(&format!(
+        "CREATE VIRTUAL TABLE vec_memories USING vec0(
+            memory_id TEXT PRIMARY KEY,
+            embedding float[{embedding_dims}] distance_metric=cosine
+        )"
+    ))
+    .map_err(db_err)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO icm_metadata (key, value) VALUES ('embedding_dims', ?1)",
+        [&embedding_dims.to_string()],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
 /// Initialize the database schema. `embedding_dims` controls the sqlite-vec vector size.
 /// Pass `None` to skip vector table creation (no embeddings feature).
 pub fn init_db(conn: &Connection) -> Result<(), IcmError> {
@@ -268,32 +284,10 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
                 .map_err(db_err)?;
             conn.execute("UPDATE memories SET embedding = NULL", [])
                 .map_err(db_err)?;
-            conn.execute_batch(&format!(
-                "CREATE VIRTUAL TABLE vec_memories USING vec0(
-                    memory_id TEXT PRIMARY KEY,
-                    embedding float[{embedding_dims}] distance_metric=cosine
-                )"
-            ))
-            .map_err(db_err)?;
-            conn.execute(
-                "INSERT OR REPLACE INTO icm_metadata (key, value) VALUES ('embedding_dims', ?1)",
-                [&embedding_dims.to_string()],
-            )
-            .map_err(db_err)?;
+            create_vec_table(conn, embedding_dims)?;
         }
     } else {
-        conn.execute_batch(&format!(
-            "CREATE VIRTUAL TABLE vec_memories USING vec0(
-                memory_id TEXT PRIMARY KEY,
-                embedding float[{embedding_dims}] distance_metric=cosine
-            )"
-        ))
-        .map_err(db_err)?;
-        conn.execute(
-            "INSERT OR REPLACE INTO icm_metadata (key, value) VALUES ('embedding_dims', ?1)",
-            [&embedding_dims.to_string()],
-        )
-        .map_err(db_err)?;
+        create_vec_table(conn, embedding_dims)?;
     }
 
     Ok(())

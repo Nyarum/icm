@@ -179,3 +179,17 @@ pub struct TopicHealth {
     pub needs_consolidation: bool,
     pub stale_count: usize,
 }
+
+impl TopicHealth {
+    pub fn status(&self) -> &'static str {
+        if self.needs_consolidation && self.stale_count > 0 {
+            "!! NEEDS ATTENTION"
+        } else if self.needs_consolidation {
+            "!  consolidate"
+        } else if self.stale_count > 0 {
+            "-  has stale entries"
+        } else {
+            "ok healthy"
+        }
+    }
+}
