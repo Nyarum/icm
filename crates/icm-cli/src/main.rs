@@ -899,8 +899,7 @@ fn cmd_store(
 
     // Auto-embed if embedder is available
     if let Some(emb) = embedder {
-        let text = format!("{topic} {content}");
-        match emb.embed(&text) {
+        match emb.embed(&memory.embed_text()) {
             Ok(vec) => memory.embedding = Some(vec),
             Err(e) => eprintln!("warning: embedding failed: {e}"),
         }
@@ -1041,8 +1040,7 @@ fn cmd_update(
 
     // Re-embed if embedder available
     if let Some(emb) = embedder {
-        let text = format!("{} {}", memory.topic, content);
-        match emb.embed(&text) {
+        match emb.embed(&memory.embed_text()) {
             Ok(vec) => memory.embedding = Some(vec),
             Err(e) => eprintln!("warning: re-embedding failed: {e}"),
         }

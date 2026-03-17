@@ -113,8 +113,9 @@ impl Concept {
     }
 
     pub fn confidence_bar(&self) -> String {
-        let filled = (self.confidence * 5.0).round() as usize;
-        let empty = 5 - filled.min(5);
+        let clamped = self.confidence.clamp(0.0, 1.0);
+        let filled = (clamped * 5.0).round() as usize;
+        let empty = 5 - filled;
         format!("{}{}", "#".repeat(filled), ".".repeat(empty))
     }
 

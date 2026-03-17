@@ -378,6 +378,10 @@ impl MemoryStore for SqliteStore {
             return Ok(Vec::new());
         }
 
+        // Cap keywords to avoid massive SQL generation
+        let keywords = &keywords[..keywords.len().min(50)];
+        let limit = limit.min(1000);
+
         let where_parts: Vec<String> = (0..keywords.len())
             .map(|i| {
                 let p = i + 1;
@@ -500,6 +504,7 @@ impl MemoryStore for SqliteStore {
         embedding: &[f32],
         limit: usize,
     ) -> IcmResult<Vec<(Memory, f32)>> {
+        let limit = limit.min(1000);
         let pool_size = limit * 4;
         let sanitized = sanitize_fts_query(query);
 

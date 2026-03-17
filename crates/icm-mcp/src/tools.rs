@@ -12,6 +12,28 @@ use crate::protocol::ToolResult;
 /// Default threshold for auto-consolidation (can be overridden by config).
 const AUTO_CONSOLIDATE_THRESHOLD: usize = 10;
 
+/// Parse a JSON keywords array from tool arguments.
+fn parse_keywords(args: &Value) -> Vec<String> {
+    args.get("keywords")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Check if a memory topic matches a filter (exact or prefix match).
+fn topic_matches(memory_topic: &str, filter: &str) -> bool {
+    memory_topic == filter || memory_topic.starts_with(&format!("{filter}:"))
+}
+
+/// Check if memory keywords contain a substring match.
+fn keyword_matches(keywords: &[String], filter: &str) -> bool {
+    keywords.iter().any(|k| k.contains(filter))
+}
+
 /// Try to auto-consolidate a topic if it exceeds the threshold.
 /// Returns a human-readable message if consolidation happened, or empty string.
 fn try_auto_consolidate(store: &SqliteStore, topic: &str, threshold: usize) -> String {
@@ -587,11 +609,9 @@ fn tool_store(
 
     let mut memory = Memory::new(topic.into(), content.into(), importance);
 
-    if let Some(keywords) = args.get("keywords").and_then(|v| v.as_array()) {
-        memory.keywords = keywords
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
+    let kw = parse_keywords(args);
+    if !kw.is_empty() {
+        memory.keywords = kw;
     }
 
     if let Some(raw) = get_str(args, "raw_excerpt") {
@@ -599,7 +619,7 @@ fn tool_store(
     }
 
     // Auto-embed if embedder is available
-    let embed_text = format!("{topic} {content}");
+    let embed_text = memory.embed_text();
     let embed_vec = if let Some(emb) = embedder {
         match emb.embed(&embed_text) {
             Ok(vec) => Some(vec),
@@ -629,11 +649,9 @@ fn tool_store(
                     if let Some(raw) = get_str(args, "raw_excerpt") {
                         updated.raw_excerpt = Some(raw.into());
                     }
-                    if let Some(keywords_arr) = args.get("keywords").and_then(|v| v.as_array()) {
-                        updated.keywords = keywords_arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect();
+                    let kw = parse_keywords(args);
+                    if !kw.is_empty() {
+                        updated.keywords = kw;
                     }
                     updated.importance = importance;
                     updated.embedding = Some(query_emb.clone());
@@ -744,11 +762,10 @@ fn tool_recall(
             if let Ok(results) = store.search_hybrid(query, &query_emb, limit) {
                 let mut scored_results = results;
                 if let Some(t) = topic {
-                    scored_results
-                        .retain(|(m, _)| m.topic == t || m.topic.starts_with(&format!("{t}:")));
+                    scored_results.retain(|(m, _)| topic_matches(&m.topic, t));
                 }
                 if let Some(kw) = keyword {
-                    scored_results.retain(|(m, _)| m.keywords.iter().any(|k| k.contains(kw)));
+                    scored_results.retain(|(m, _)| keyword_matches(&m.keywords, kw));
                 }
 
                 // Batch update access counts
@@ -779,10 +796,10 @@ fn tool_recall(
     }
 
     if let Some(t) = topic {
-        results.retain(|m| m.topic == t || m.topic.starts_with(&format!("{t}:")));
+        results.retain(|m| topic_matches(&m.topic, t));
     }
     if let Some(kw) = keyword {
-        results.retain(|m| m.keywords.iter().any(|k| k.contains(kw)));
+        results.retain(|m| keyword_matches(&m.keywords, kw));
     }
 
     // Batch update access counts
@@ -918,17 +935,14 @@ fn tool_update(store: &SqliteStore, embedder: Option<&dyn Embedder>, args: &Valu
         }
     }
 
-    if let Some(keywords_arr) = args.get("keywords").and_then(|v| v.as_array()) {
-        memory.keywords = keywords_arr
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
+    let kw = parse_keywords(args);
+    if !kw.is_empty() {
+        memory.keywords = kw;
     }
 
     // Re-embed if embedder available
     if let Some(emb) = embedder {
-        let text = format!("{} {}", memory.topic, content);
-        if let Ok(vec) = emb.embed(&text) {
+        if let Ok(vec) = emb.embed(&memory.embed_text()) {
             memory.embedding = Some(vec);
         }
     }
