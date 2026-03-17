@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "icm-cli"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "icm-core"
-version = "0.10.0"
+version = "0.10.2"
 dependencies = [
  "chrono",
  "directories",
@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "icm-mcp"
-version = "0.10.0"
+version = "0.10.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "icm-store"
-version = "0.10.0"
+version = "0.10.2"
 dependencies = [
  "chrono",
  "icm-core",
