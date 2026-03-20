@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-use icm_core::IcmError;
+use icm_core::{IcmError, IcmResult};
 
 use crate::store::db_err;
 
@@ -131,7 +131,7 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
                 VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords);
             END;
 
-            CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+            CREATE TRIGGER memories_au AFTER UPDATE OF topic, summary, keywords ON memories BEGIN
                 INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords)
                 VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords);
                 INSERT INTO memories_fts(rowid, id, topic, summary, keywords)
@@ -259,6 +259,11 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
             .map_err(db_err)?;
     }
 
+    // Migration: scope FTS UPDATE trigger to indexed columns only (fixes #44).
+    // The old trigger fired on ANY update (including update_access, apply_decay)
+    // which churned the FTS index and could create ghost entries.
+    migrate_fts_update_trigger(conn)?;
+
     // sqlite-vec virtual table for vector search (dimension-aware)
     let vec_exists: bool = conn
         .query_row(
@@ -288,6 +293,46 @@ pub fn init_db_with_dims(conn: &Connection, embedding_dims: usize) -> Result<(),
         }
     } else {
         create_vec_table(conn, embedding_dims)?;
+    }
+
+    Ok(())
+}
+
+/// Migrate existing DBs: replace the broad `memories_au` trigger with one
+/// scoped to `UPDATE OF topic, summary, keywords` so that `update_access` /
+/// `apply_decay` no longer churn the FTS index.  Also rebuilds the FTS index
+/// to purge any ghost entries accumulated before this fix.
+fn migrate_fts_update_trigger(conn: &Connection) -> IcmResult<()> {
+    // Check if the trigger already has the scoped form by inspecting its SQL.
+    let trigger_sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='memories_au'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let needs_migration = match &trigger_sql {
+        // Trigger exists but uses the old broad form (no OF clause).
+        Some(sql) => !sql.contains("UPDATE OF"),
+        // Trigger doesn't exist — FTS table was just created with the new form.
+        None => false,
+    };
+
+    if needs_migration {
+        conn.execute_batch(
+            "
+            DROP TRIGGER IF EXISTS memories_au;
+            CREATE TRIGGER memories_au AFTER UPDATE OF topic, summary, keywords ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, id, topic, summary, keywords)
+                VALUES('delete', old.rowid, old.id, old.topic, old.summary, old.keywords);
+                INSERT INTO memories_fts(rowid, id, topic, summary, keywords)
+                VALUES (new.rowid, new.id, new.topic, new.summary, new.keywords);
+            END;
+            INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
+            ",
+        )
+        .map_err(db_err)?;
     }
 
     Ok(())
