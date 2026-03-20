@@ -733,6 +733,17 @@ impl MemoryStore for SqliteStore {
             return Err(e);
         }
 
+        // Rebuild FTS index to eliminate any ghost entries from the external
+        // content table.  This guarantees search results stay consistent after
+        // bulk deletes (fixes #44).
+        if let Err(e) = self
+            .conn
+            .execute_batch("INSERT INTO memories_fts(memories_fts) VALUES('rebuild');")
+        {
+            let _ = self.conn.execute_batch("ROLLBACK;");
+            return Err(IcmError::Database(e.to_string()));
+        }
+
         self.conn.execute_batch("COMMIT;").map_err(db_err)?;
         Ok(())
     }
@@ -2155,6 +2166,65 @@ mod tests {
 
         // topic-b should be untouched
         assert_eq!(store.get_by_topic("topic-b").unwrap().len(), 1);
+    }
+
+    /// Reproduces issue #44: after consolidation, recall should only return the
+    /// consolidated memory — not stale fragments from the originals.
+    #[test]
+    fn test_consolidate_no_stale_fts_results() {
+        let store = test_store();
+
+        // Step 1: store 3 related memories on the same topic
+        store
+            .store(make_memory(
+                "errors-resolved",
+                "fix: null pointer in parser",
+            ))
+            .unwrap();
+        store
+            .store(make_memory(
+                "errors-resolved",
+                "fix: timeout in HTTP client",
+            ))
+            .unwrap();
+        store
+            .store(make_memory(
+                "errors-resolved",
+                "fix: race condition in cache",
+            ))
+            .unwrap();
+
+        // Verify FTS finds them before consolidation
+        let before = store.search_fts("fix", 10).unwrap();
+        assert_eq!(before.len(), 3);
+
+        // Step 2: consolidate
+        let consolidated = make_memory(
+            "errors-resolved",
+            "All errors resolved: parser, HTTP, cache",
+        );
+        store
+            .consolidate_topic("errors-resolved", consolidated)
+            .unwrap();
+
+        // Step 3: recall — should only return the consolidated memory
+        let after = store.search_fts("fix", 10).unwrap();
+        assert!(
+            after.len() <= 1,
+            "expected at most 1 result after consolidation, got {}",
+            after.len()
+        );
+
+        // The consolidated memory should be findable
+        let consolidated_results = store.search_fts("errors resolved parser", 10).unwrap();
+        assert_eq!(consolidated_results.len(), 1);
+        assert!(consolidated_results[0]
+            .summary
+            .contains("All errors resolved"));
+
+        // Verify topic has exactly 1 memory
+        let topic_mems = store.get_by_topic("errors-resolved").unwrap();
+        assert_eq!(topic_mems.len(), 1);
     }
 
     // === MemoirStore tests ===
