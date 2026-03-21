@@ -39,3 +39,14 @@ crossterm = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[package.metadata.deb]
+maintainer = "Patrick Szymkowiak"
+copyright = "2024-2026 Patrick Szymkowiak"
+extended-description = "Permanent memory for AI agents — MCP server with hybrid search, temporal decay, and multilingual embeddings."
+section = "utility"
+priority = "optional"
+assets = [["target/release/icm", "usr/bin/", "755"]]
+
+[package.metadata.generate-rpm]
+assets = [{ source = "target/release/icm", dest = "/usr/bin/icm", mode = "755" }]

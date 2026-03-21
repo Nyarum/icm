@@ -10,8 +10,7 @@ function Get-Arch {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
     switch ($arch) {
         "X64"   { return "x86_64" }
-        "Arm64" { return "aarch64" }
-        default { throw "Unsupported architecture: $arch" }
+        default { throw "Unsupported architecture: $arch. Only x86_64 is supported on Windows." }
     }
 }
 

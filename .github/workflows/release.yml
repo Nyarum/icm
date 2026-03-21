@@ -44,9 +44,6 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
 
     steps:
       - name: Checkout
@@ -92,9 +89,73 @@ jobs:
           name: icm-${{ matrix.target }}
           path: icm-${{ matrix.target }}.${{ matrix.archive }}
 
+  build-deb:
+    name: Build .deb
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build .deb
+        run: cargo deb -p icm-cli
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p deb-out
+          cp target/debian/*.deb deb-out/
+          # Create version-agnostic name
+          cp target/debian/*.deb deb-out/icm_amd64.deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: icm-deb
+          path: deb-out/*.deb
+
+  build-rpm:
+    name: Build .rpm
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install dependencies
+        run: dnf install -y git rust cargo rpm-build
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm
+
+      - name: Build release
+        run: cargo build --release -p icm-cli
+
+      - name: Generate .rpm
+        run: cargo generate-rpm -p crates/icm-cli
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p rpm-out
+          cp target/generate-rpm/*.rpm rpm-out/
+          # Create version-agnostic name
+          VERSION=$(grep '^version' crates/icm-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          cp target/generate-rpm/*.rpm "rpm-out/icm-${VERSION}-1.x86_64.rpm"
+          cp target/generate-rpm/*.rpm rpm-out/icm.x86_64.rpm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: icm-rpm
+          path: rpm-out/*.rpm
+
   release:
     name: Create Release
-    needs: [build]
+    needs: [build, build-deb, build-rpm]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -119,7 +180,7 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release/ \;
 
       - name: Create checksums
         run: |
