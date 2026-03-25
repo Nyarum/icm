@@ -252,7 +252,7 @@ jobs:
             desc "Permanent memory for AI agents — MCP server with hybrid search"
             homepage "https://github.com/rtk-ai/icm"
             version "VERSION_PLACEHOLDER"
-            license "MIT"
+            license "Apache-2.0"
 
             on_macos do
               on_intel do
