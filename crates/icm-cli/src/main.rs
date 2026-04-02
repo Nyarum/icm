@@ -838,7 +838,13 @@ fn main() -> Result<()> {
             dry_run,
             store_raw,
         } => cmd_extract(&store, &project, text, dry_run, store_raw),
-        Commands::RecallContext { query, limit } => cmd_recall_context(&store, &query, limit),
+        Commands::RecallContext { query, limit } => {
+                #[cfg(feature = "embeddings")]
+                let emb_ref = embedder.as_ref().map(|e| e as &dyn icm_core::Embedder);
+                #[cfg(not(feature = "embeddings"))]
+                let emb_ref: Option<&dyn icm_core::Embedder> = None;
+                cmd_recall_context(&store, emb_ref, &query, limit)
+            }
         Commands::Config => cmd_config(),
         Commands::Bench { count } => cmd_bench(count),
         Commands::BenchRecall {
@@ -866,7 +872,13 @@ fn main() -> Result<()> {
             HookCommands::Pre => cmd_hook_pre(),
             HookCommands::Post { every } => cmd_hook_post(&store, every),
             HookCommands::Compact => cmd_hook_compact(&store),
-            HookCommands::Prompt => cmd_hook_prompt(&store),
+            HookCommands::Prompt => {
+                #[cfg(feature = "embeddings")]
+                let emb_ref = embedder.as_ref().map(|e| e as &dyn icm_core::Embedder);
+                #[cfg(not(feature = "embeddings"))]
+                let emb_ref: Option<&dyn icm_core::Embedder> = None;
+                cmd_hook_prompt(&store, emb_ref)
+            }
         },
         #[cfg(feature = "tui")]
         Commands::Dashboard => {
@@ -1390,7 +1402,7 @@ fn cmd_hook_compact(store: &SqliteStore) -> Result<()> {
 /// UserPromptSubmit hook (Layer 2): inject recalled context at the start of each prompt.
 /// Reads JSON from stdin with `user_message`, recalls relevant memories,
 /// and prints context to stdout (Claude Code appends it as system-reminder).
-fn cmd_hook_prompt(store: &SqliteStore) -> Result<()> {
+fn cmd_hook_prompt(store: &SqliteStore, embedder: Option<&dyn icm_core::Embedder>) -> Result<()> {
     use std::io::Read;
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
@@ -1425,14 +1437,10 @@ fn cmd_hook_prompt(store: &SqliteStore) -> Result<()> {
         format!("{project} {message}")
     };
 
-    // Truncate query to first 200 chars for search
-    let query = if query.len() > 200 {
-        &query[..200]
-    } else {
-        &query
-    };
+    // Truncate query to first 200 chars for search (char-safe)
+    let query = truncate_str(&query, 200);
 
-    let ctx = extract::recall_context(store, query, 5)?;
+    let ctx = extract::recall_context(store, embedder, &query, 5)?;
     if !ctx.is_empty() {
         print!("{ctx}");
     }
@@ -2306,8 +2314,8 @@ fn cmd_extract(
     Ok(())
 }
 
-fn cmd_recall_context(store: &SqliteStore, query: &str, limit: usize) -> Result<()> {
-    let ctx = extract::recall_context(store, query, limit)?;
+fn cmd_recall_context(store: &SqliteStore, embedder: Option<&dyn icm_core::Embedder>, query: &str, limit: usize) -> Result<()> {
+    let ctx = extract::recall_context(store, embedder, query, limit)?;
     if ctx.is_empty() {
         eprintln!("No relevant context found.");
     } else {
@@ -2677,7 +2685,7 @@ fn cmd_bench_recall(model: &str, runs: usize, verbose: bool) -> Result<()> {
         let mut responses_with: Vec<String> = Vec::new();
         for (i, q) in questions.iter().enumerate() {
             let store = SqliteStore::new(&icm_db)?;
-            let ctx = extract::recall_context(&store, q.prompt, 15)?;
+            let ctx = extract::recall_context(&store, None, q.prompt, 15)?;
             if verbose && !ctx.is_empty() {
                 eprintln!("  [verbose] Context injected for Q{}:", i + 1);
                 for line in ctx.lines().take(10) {
@@ -2901,7 +2909,7 @@ fn cmd_bench_agent(sessions: usize, model: &str, runs: usize, verbose: bool) -> 
         for (i, prompt) in prompts.iter().enumerate() {
             let effective_prompt = if i > 0 {
                 let store = SqliteStore::new(&icm_db)?;
-                let ctx = extract::recall_context(&store, prompt, 15)?;
+                let ctx = extract::recall_context(&store, None, prompt, 15)?;
                 if verbose && !ctx.is_empty() {
                     eprintln!("  [verbose] Context injected for session {}:", i + 1);
                     for line in ctx.lines().take(8) {
@@ -3966,7 +3974,25 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
+        let mut end = max.saturating_sub(3);
+        // Find a valid UTF-8 char boundary
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
+    }
+}
+
+/// Truncate a string to max bytes at a valid UTF-8 char boundary (no suffix).
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s[..end].to_string()
     }
 }
 

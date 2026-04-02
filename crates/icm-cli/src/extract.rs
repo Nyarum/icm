@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use icm_core::{Importance, Memory, MemoryStore};
+use icm_core::{Embedder, Importance, Memory, MemoryStore};
 use icm_store::SqliteStore;
 
 /// Extract key facts from text and store them in ICM.
@@ -50,22 +50,25 @@ pub fn extract_and_store_with_opts(
 }
 
 /// Recall relevant memories and format as context preamble for prompt injection.
-pub fn recall_context(store: &SqliteStore, query: &str, limit: usize) -> Result<String> {
-    // Try FTS search with the query
-    let results = store.search_fts(query, limit * 2)?;
-
-    let relevant: Vec<_> = if results.is_empty() {
-        // Fallback: get all memories sorted by weight
-        let topics = store.list_topics()?;
-        let mut all = Vec::new();
-        for (topic, _) in &topics {
-            all.extend(store.get_by_topic(topic)?);
+pub fn recall_context(
+    store: &SqliteStore,
+    embedder: Option<&dyn Embedder>,
+    query: &str,
+    limit: usize,
+) -> Result<String> {
+    // Try hybrid search (FTS + vector) for proper relevance ranking
+    let relevant: Vec<Memory> = if let Some(emb) = embedder {
+        if let Ok(query_emb) = emb.embed(query) {
+            if let Ok(results) = store.search_hybrid(query, &query_emb, limit) {
+                results.into_iter().map(|(m, _)| m).collect()
+            } else {
+                store.search_fts(query, limit)?
+            }
+        } else {
+            store.search_fts(query, limit)?
         }
-        all.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap());
-        all.truncate(limit);
-        all
     } else {
-        results.into_iter().take(limit).collect()
+        store.search_fts(query, limit)?
     };
 
     if relevant.is_empty() {
